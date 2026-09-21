@@ -30,7 +30,7 @@ final class Client
      */
     public function __construct(
         string $apiKey,
-        string $baseUrl = 'https://mail.example.com',
+        string $baseUrl = 'https://proxymailer.wxp.app',
         float $timeout = 30.0,
         int $maxRetries = 3,
         ?HttpClient $httpClient = null,

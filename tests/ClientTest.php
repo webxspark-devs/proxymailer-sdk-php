@@ -83,7 +83,7 @@ final class ClientTest extends TestCase
     public function test_rejects_non_pm_live_keys(): void
     {
         $this->expectException(\InvalidArgumentException::class);
-        new Client('sk_test_123', 'https://mail.example.com');
+        new Client('sk_test_123', 'https://proxymailer.wxp.app');
     }
 
     public function test_attachment_helpers(): void
@@ -244,7 +244,7 @@ final class ClientTest extends TestCase
     public function test_default_http_client_applies_timeout_via_guzzle(): void
     {
         $http = new HttpClient(
-            'https://mail.example.com',
+            'https://proxymailer.wxp.app',
             self::KEY,
             12.5,
             new RetryPolicy(0),
@@ -299,7 +299,7 @@ final class ClientTest extends TestCase
     {
         $factory = new Psr17Factory;
         $http = new HttpClient(
-            'https://mail.example.com',
+            'https://proxymailer.wxp.app',
             self::KEY,
             5.0,
             new RetryPolicy($maxRetries),
@@ -308,6 +308,6 @@ final class ClientTest extends TestCase
             $factory,
         );
 
-        return new Client(self::KEY, 'https://mail.example.com', httpClient: $http, maxRetries: $maxRetries);
+        return new Client(self::KEY, 'https://proxymailer.wxp.app', httpClient: $http, maxRetries: $maxRetries);
     }
 }
