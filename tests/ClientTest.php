@@ -423,6 +423,19 @@ final class ClientTest extends TestCase
         }
     }
 
+    public function test_empty_json_object_body_is_accepted_as_object(): void
+    {
+        $mock = new MockClient;
+        $mock->addResponse(new Response(202, ['Content-Type' => 'application/json'], '{}'));
+
+        $client = $this->clientWith($mock);
+        $result = $client->send(['from' => 'a@b.c', 'to' => ['c@d.e']]);
+
+        $this->assertSame('', $result->id);
+        $this->assertSame('unknown', $result->status);
+        $this->assertSame(202, $result->httpStatus);
+    }
+
     public function test_attachment_from_path_guesses_pdf_mime_like_node(): void
     {
         $tmp = tempnam(sys_get_temp_dir(), 'pm');
