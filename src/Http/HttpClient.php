@@ -165,9 +165,18 @@ final class HttpClient
 
         $psrResponse = $this->client->sendRequest($request);
         $raw = (string) $psrResponse->getBody();
-        $decoded = $raw === '' ? [] : json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
-        if (! is_array($decoded)) {
-            $decoded = ['message' => $raw];
+        // Match Node/Python: invalid or non-object JSON becomes {message: raw}, never a transport throw.
+        if ($raw === '') {
+            $decoded = [];
+        } else {
+            try {
+                $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            } catch (\JsonException) {
+                $decoded = ['message' => $raw];
+            }
+            if (! is_array($decoded) || array_is_list($decoded)) {
+                $decoded = ['message' => $raw];
+            }
         }
 
         /** @var array<string, list<string>> $headers */

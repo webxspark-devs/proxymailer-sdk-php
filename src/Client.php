@@ -219,12 +219,40 @@ final class Client
         }
 
         $detected = function_exists('mime_content_type') ? mime_content_type($path) : false;
+        $resolvedName = $filename ?? basename($path);
+        $resolvedType = $contentType
+            ?? ($detected !== false ? $detected : null)
+            ?? self::guessContentTypeFromExtension($resolvedName);
 
-        return self::attachmentFromBytes(
-            $filename ?? basename($path),
-            $bytes,
-            $contentType ?? ($detected !== false ? $detected : 'application/octet-stream'),
-        );
+        return self::attachmentFromBytes($resolvedName, $bytes, $resolvedType);
+    }
+
+    /**
+     * Minimal extension → MIME map (matches the Node SDK; keeps fileinfo optional).
+     */
+    private static function guessContentTypeFromExtension(string $filename): string
+    {
+        $ext = strtolower(strrchr($filename, '.') ?: '');
+        $map = [
+            '.txt' => 'text/plain',
+            '.html' => 'text/html',
+            '.htm' => 'text/html',
+            '.css' => 'text/css',
+            '.csv' => 'text/csv',
+            '.json' => 'application/json',
+            '.pdf' => 'application/pdf',
+            '.png' => 'image/png',
+            '.jpg' => 'image/jpeg',
+            '.jpeg' => 'image/jpeg',
+            '.gif' => 'image/gif',
+            '.webp' => 'image/webp',
+            '.svg' => 'image/svg+xml',
+            '.zip' => 'application/zip',
+            '.xml' => 'application/xml',
+            '.md' => 'text/markdown',
+        ];
+
+        return $map[$ext] ?? 'application/octet-stream';
     }
 
     /**

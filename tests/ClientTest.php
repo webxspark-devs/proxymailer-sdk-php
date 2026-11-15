@@ -265,6 +265,9 @@ final class ClientTest extends TestCase
             'data' => [['id' => 1, 'email' => 'a@acme.test', 'owned_by_application' => true]],
             'meta' => ['count' => 1, 'total' => 1, 'page' => 1, 'per_page' => 50, 'can_manage_approved_senders' => true],
         ], JSON_THROW_ON_ERROR)));
+        $mock->addResponse(new Response(200, ['Content-Type' => 'application/json'], json_encode([
+            'data' => ['id' => 1, 'email' => 'a@acme.test', 'owned_by_application' => true, 'status' => 'active'],
+        ], JSON_THROW_ON_ERROR)));
         $mock->addResponse(new Response(201, ['Content-Type' => 'application/json'], json_encode([
             'data' => ['id' => 9, 'email' => 'b@acme.test', 'owned_by_application' => true, 'status' => 'active'],
         ], JSON_THROW_ON_ERROR)));
@@ -280,19 +283,160 @@ final class ClientTest extends TestCase
         $list = $client->listApprovedSenders(1, 50);
         $this->assertArrayHasKey('data', $list);
         $this->assertSame('/api/v1/approved-senders', $mock->getRequests()[0]->getUri()->getPath());
+        $this->assertSame('page=1&per_page=50', $mock->getRequests()[0]->getUri()->getQuery());
+
+        $got = $client->getApprovedSender(1);
+        $this->assertSame(1, $got['id']);
+        $this->assertSame('/api/v1/approved-senders/1', $mock->getRequests()[1]->getUri()->getPath());
 
         $created = $client->createApprovedSender(['email' => 'b@acme.test']);
         $this->assertSame(9, $created['id']);
-        $this->assertSame('POST', $mock->getRequests()[1]->getMethod());
+        $this->assertSame('POST', $mock->getRequests()[2]->getMethod());
 
         $updated = $client->updateApprovedSender(9, ['status' => 'disabled']);
         $this->assertSame('disabled', $updated['status']);
-        $this->assertSame('PATCH', $mock->getRequests()[2]->getMethod());
-        $this->assertSame('/api/v1/approved-senders/9', $mock->getRequests()[2]->getUri()->getPath());
+        $this->assertSame('PATCH', $mock->getRequests()[3]->getMethod());
+        $this->assertSame('/api/v1/approved-senders/9', $mock->getRequests()[3]->getUri()->getPath());
 
         $deleted = $client->deleteApprovedSender(9);
         $this->assertTrue($deleted['deleted']);
-        $this->assertSame('DELETE', $mock->getRequests()[3]->getMethod());
+        $this->assertSame('DELETE', $mock->getRequests()[4]->getMethod());
+    }
+
+    public function test_list_approved_senders_clamps_pagination(): void
+    {
+        $mock = new MockClient;
+        $mock->addResponse(new Response(200, [], json_encode([
+            'data' => [],
+            'meta' => ['count' => 0, 'total' => 0, 'page' => 1, 'per_page' => 100],
+        ], JSON_THROW_ON_ERROR)));
+
+        $client = $this->clientWith($mock);
+        $client->listApprovedSenders(0, 500);
+
+        $this->assertSame('page=1&per_page=100', $mock->getLastRequest()->getUri()->getQuery());
+    }
+
+    public function test_groups_and_mappings_helpers(): void
+    {
+        $mock = new MockClient;
+        $mock->addResponse(new Response(200, [], json_encode([
+            'data' => [['id' => 12, 'name' => 'DevOps', 'identifier_email' => 'devops@acme.test']],
+            'meta' => ['count' => 1],
+        ], JSON_THROW_ON_ERROR)));
+        $mock->addResponse(new Response(200, [], json_encode([
+            'data' => [
+                'id' => 12,
+                'name' => 'DevOps',
+                'identifier_email' => 'devops@acme.test',
+                'resolved_recipients' => ['a@acme.test'],
+            ],
+        ], JSON_THROW_ON_ERROR)));
+        $mock->addResponse(new Response(200, [], json_encode([
+            'data' => [
+                'nodes' => [['id' => 'group:12', 'type' => 'group', 'label' => 'DevOps']],
+                'edges' => [['id' => 'group:12->mailbox:a@acme.test', 'source' => 'group:12', 'target' => 'mailbox:a@acme.test', 'kind' => 'member']],
+            ],
+            'meta' => ['group_count' => 1, 'alias_count' => 0, 'mailbox_count' => 1, 'edge_count' => 1],
+        ], JSON_THROW_ON_ERROR)));
+
+        $client = $this->clientWith($mock);
+
+        $list = $client->listGroups();
+        $this->assertSame(1, $list['meta']['count']);
+        $this->assertSame('/api/v1/groups', $mock->getRequests()[0]->getUri()->getPath());
+
+        $group = $client->getGroup(12);
+        $this->assertSame(12, $group['id']);
+        $this->assertSame(['a@acme.test'], $group['resolved_recipients']);
+        $this->assertSame('/api/v1/groups/12', $mock->getRequests()[1]->getUri()->getPath());
+
+        $graph = $client->getMappings();
+        $this->assertSame('group:12', $graph['data']['nodes'][0]['id']);
+        $this->assertSame('/api/v1/mappings', $mock->getRequests()[2]->getUri()->getPath());
+    }
+
+    public function test_client_side_validation_requires_from_and_to(): void
+    {
+        $mock = new MockClient;
+        $client = $this->clientWith($mock);
+
+        try {
+            $client->send(['to' => ['user@example.com']]);
+            $this->fail('expected ValidationException for missing from');
+        } catch (ValidationException $e) {
+            $this->assertSame('`from` is required.', $e->getMessage());
+        }
+
+        try {
+            $client->send(['from' => 'a@b.c', 'to' => []]);
+            $this->fail('expected ValidationException for empty to');
+        } catch (ValidationException $e) {
+            $this->assertSame('`to` is required.', $e->getMessage());
+        }
+
+        $this->assertCount(0, $mock->getRequests());
+    }
+
+    public function test_generic_502_is_retried_then_throws_api_exception(): void
+    {
+        $mock = new MockClient;
+        $mock->addResponse(new Response(502, [], json_encode(['message' => 'bad gateway'], JSON_THROW_ON_ERROR)));
+        $mock->addResponse(new Response(502, [], json_encode(['message' => 'bad gateway'], JSON_THROW_ON_ERROR)));
+
+        $client = $this->clientWith($mock, maxRetries: 1);
+
+        try {
+            $client->send(['from' => 'a@b.c', 'to' => ['c@d.e']]);
+            $this->fail('expected ApiException');
+        } catch (ApiException $e) {
+            $this->assertSame(502, $e->statusCode);
+            $this->assertSame('bad gateway', $e->getMessage());
+        }
+
+        $this->assertCount(2, $mock->getRequests());
+    }
+
+    public function test_non_json_error_body_still_maps_status_exceptions(): void
+    {
+        $mock = new MockClient;
+        $mock->addResponse(new Response(401, ['Content-Type' => 'text/plain'], 'not-json-auth-failure'));
+
+        $client = $this->clientWith($mock, maxRetries: 0);
+        $this->expectException(AuthenticationException::class);
+        $client->send(['from' => 'a@b.c', 'to' => ['c@d.e']]);
+    }
+
+    public function test_json_array_body_is_treated_as_message_payload(): void
+    {
+        $mock = new MockClient;
+        $mock->addResponse(new Response(500, [], '[1,2,3]'));
+
+        $client = $this->clientWith($mock, maxRetries: 0);
+
+        try {
+            $client->send(['from' => 'a@b.c', 'to' => ['c@d.e']]);
+            $this->fail('expected ApiException');
+        } catch (ApiException $e) {
+            $this->assertSame(500, $e->statusCode);
+            $this->assertSame('[1,2,3]', $e->getMessage());
+        }
+    }
+
+    public function test_attachment_from_path_guesses_pdf_mime_like_node(): void
+    {
+        $tmp = tempnam(sys_get_temp_dir(), 'pm');
+        $this->assertNotFalse($tmp);
+        $pdf = $tmp.'.pdf';
+        rename($tmp, $pdf);
+        file_put_contents($pdf, '%PDF-1.4 fake');
+        try {
+            $att = Client::attachmentFromPath($pdf);
+            $this->assertSame(basename($pdf), $att['filename']);
+            $this->assertSame('application/pdf', $att['content_type']);
+        } finally {
+            @unlink($pdf);
+        }
     }
 
     private function clientWith(MockClient $mock, int $maxRetries = 0): Client
